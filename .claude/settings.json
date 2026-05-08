@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(yarn add *)",
+      "WebFetch(domain:app.squads.so)",
+      "Bash(yarn install *)"
+    ]
+  }
+}

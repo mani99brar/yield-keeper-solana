@@ -1,0 +1,54 @@
+{
+  "name": "reflect-keeper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Off-chain keeper service for depositing into Reflect's USDC+",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "deposit": "tsx src/cli/deposit.ts",
+    "jupiter:deposit": "tsx src/cli/jupiter-deposit.ts",
+    "squads:create": "tsx src/cli/squads-create.ts",
+    "run:schedules": "tsx src/cli/run-schedules.ts",
+    "balance": "tsx src/cli/balance.ts",
+    "wallet:show": "tsx src/cli/wallet.ts",
+    "wallet:airdrop": "tsx src/cli/airdrop.ts",
+    "lint": "tsc --noEmit",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop reflect-keeper",
+    "pm2:restart": "pm2 restart reflect-keeper",
+    "pm2:logs": "pm2 logs reflect-keeper",
+    "pm2:status": "pm2 status"
+  },
+  "dependencies": {
+    "@jup-ag/lend": "^0.1.9",
+    "@kamino-finance/farms-sdk": "3.2.24",
+    "@reflectmoney/stable.ts": "*",
+    "@solana-program/compute-budget": "^0.15.0",
+    "@solana-program/system": "^0.12.0",
+    "@solana-program/token": "^0.13.0",
+    "@solana-program/token-2022": "^0.9.0",
+    "@solana/kit": "*",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.95.0",
+    "@sqds/multisig": "^2.1.4",
+    "bn.js": "^5.2.1",
+    "bs58": "^6.0.0",
+    "dotenv": "^16.4.5",
+    "ioredis": "^5.4.2",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.2.2"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.1.5",
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "packageManager": "yarn@4.10.3+sha512.c38cafb5c7bb273f3926d04e55e1d8c9dfa7d9c3ea1f36a4868fa028b9e5f72298f0b7f401ad5eb921749eb012eb1c3bb74bf7503df3ee43fd600d14a018266f"
+}

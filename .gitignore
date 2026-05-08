@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Keypairs — never commit private keys
+keeper-keypair.json
+*.keypair.json
+
+# PM2 logs and runtime files
+.pm2/
+logs/
+*.log
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Yarn
+.yarn/cache
+.yarn/install-state.gz
