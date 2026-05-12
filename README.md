@@ -357,12 +357,12 @@ The `delegationTxSignature` is read but not yet acted on — Phase 1 funds the d
 
 #### Result statuses
 
-| Status | Meaning |
-|--------|---------|
-| `success` | Deposit + transfer both confirmed |
-| `partial` | Deposit confirmed, transfer failed — jlUSDC sits in keeper wallet, manual recovery needed. `lastRunAt` is still advanced so the next tick does not double-deposit. |
-| `failed` | Deposit itself failed; `lastRunAt` NOT advanced — will retry on next tick |
-| `skipped` | Not due, no funding configured, no wallet, or invalid wallet address |
+| Status | Meaning | DB updated? |
+|--------|---------|-------------|
+| `success` | Deposit + transfer both confirmed | ✅ `lastRunAt` + tx log |
+| `partial` | Deposit confirmed, transfer failed. `lastRunAt` NOT advanced; next tick will deposit again. Drain the keeper's stuck jlUSDC manually with `yarn tsx src/cli/transfer-stuck-jlusdc.ts <recipient>` and fix the root cause quickly to avoid accumulating stuck balance. | ❌ |
+| `failed` | Deposit itself failed | ❌ — user remains due, retried next tick |
+| `skipped` | Not due, no funding configured, no wallet, invalid address, or keeper has insufficient USDC / SOL | ❌ |
 
 ---
 

@@ -9,10 +9,15 @@ import {
   setLastRunAt,
   usdToRawUsdc,
 } from "./db.js";
-import { depositJupiterLend, transferJlUsdc } from "./jupiter-lend.js";
+import { depositJupiterLend, getUsdcBalance, transferJlUsdc } from "./jupiter-lend.js";
 import { log } from "./logger.js";
 import { PublicKey } from "@solana/web3.js";
-import { buildPartialMessage, buildSuccessMessage, sendTelegramMessage } from "./telegram.js";
+import { connection } from "./connection.js";
+import { loadWallet } from "./wallet.js";
+import { buildSuccessMessage, sendTelegramMessage } from "./telegram.js";
+
+/** Minimum SOL keeper should retain for transaction fees: 0.005 SOL = 5_000_000 lamports. */
+const KEEPER_MIN_SOL_LAMPORTS = 5_000_000n;
 
 type RunResult = {
   telegramId: string;
@@ -122,6 +127,53 @@ export async function runDueDeposits(): Promise<RunResult[]> {
       "Executing scheduled deposit",
     );
 
+    // Pre-flight: verify the keeper can cover this deposit + tx fees.
+    // If not, skip with an explicit reason. lastRunAt is NOT advanced, so the
+    // user remains "due" and we retry on the next polling tick.
+    const keeperWallet = await loadWallet();
+    const keeperSol = BigInt(await connection.getBalance(keeperWallet.keypair.publicKey));
+    const keeperUsdc = await getUsdcBalance(keeperWallet.keypair.publicKey);
+
+    if (keeperUsdc < amountRaw) {
+      log.warn(
+        {
+          telegramId,
+          keeper: keeperWallet.address,
+          neededUsdcRaw: amountRaw.toString(),
+          haveUsdcRaw: keeperUsdc.toString(),
+        },
+        "Skipping — keeper has insufficient USDC; will retry next cycle",
+      );
+      results.push({
+        telegramId,
+        recipient: recipientAddress,
+        signerWallet: wallet.walletAddress,
+        status: "skipped",
+        reason: "keeper-insufficient-usdc",
+      });
+      continue;
+    }
+
+    if (keeperSol < KEEPER_MIN_SOL_LAMPORTS) {
+      log.warn(
+        {
+          telegramId,
+          keeper: keeperWallet.address,
+          neededSolLamports: KEEPER_MIN_SOL_LAMPORTS.toString(),
+          haveSolLamports: keeperSol.toString(),
+        },
+        "Skipping — keeper has insufficient SOL for fees; will retry next cycle",
+      );
+      results.push({
+        telegramId,
+        recipient: recipientAddress,
+        signerWallet: wallet.walletAddress,
+        status: "skipped",
+        reason: "keeper-insufficient-sol",
+      });
+      continue;
+    }
+
     // 1. Deposit USDC → keeper receives jlUSDC.
     // Phase 1 uses the keeper's own USDC; delegate-based pull from the user's
     // ATA (settings.delegationTxSignature) is on the roadmap.
@@ -196,21 +248,15 @@ export async function runDueDeposits(): Promise<RunResult[]> {
       });
     } catch (err: any) {
       const errMsg = err?.message || err?.name || String(err);
-      const now = new Date();
-      await setLastRunAt(telegramId, now);
-      await logSavingsTransaction(telegramId, {
-        depositSignature: deposit.signature,
-        timestamp: now.toISOString(),
-        recipientAddress,
-        signerWallet: wallet.walletAddress,
-        amountUsd: settings.fundingAmountUsd,
-        amountUsdcRaw: amountRaw.toString(),
-        jlUsdcReceived: deposit.jlUsdcReceived.toString(),
-        platform: "jupiter",
-        status: "partial",
-        error: errMsg,
-      });
 
+      // Policy: "no saving done → no DB update". The deposit landed on-chain
+      // but the user never received their tokens, so we do NOT advance lastRunAt,
+      // do NOT write a tx log entry, and do NOT notify the user.
+      //
+      // Side effect: next tick will deposit AGAIN, leaving more jlUSDC stuck
+      // in the keeper. Fix the underlying transfer issue and use
+      // `yarn tsx src/cli/transfer-stuck-jlusdc.ts <recipient>` to drain the
+      // accumulated balance.
       log.error(
         {
           telegramId,
@@ -220,15 +266,7 @@ export async function runDueDeposits(): Promise<RunResult[]> {
           err: errMsg,
           stack: err?.stack,
         },
-        "DEPOSIT OK BUT TRANSFER FAILED — jlUSDC is in the keeper wallet; manual transfer required",
-      );
-
-      await sendTelegramMessage(
-        telegramId,
-        buildPartialMessage({
-          amountUsd: settings.fundingAmountUsd,
-          depositSignature: deposit.signature,
-        }),
+        "DEPOSIT OK BUT TRANSFER FAILED — keeper now holds extra jlUSDC; lastRunAt NOT advanced, deposit will retry next tick",
       );
 
       results.push({

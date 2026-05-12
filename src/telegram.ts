@@ -58,16 +58,3 @@ export function buildSuccessMessage(args: {
   ].join("\n");
 }
 
-export function buildPartialMessage(args: {
-  amountUsd: number;
-  depositSignature: string;
-}): string {
-  return [
-    `⚠️ <b>Savings deposit partially complete</b>`,
-    ``,
-    `Your ${fmtUsd(args.amountUsd)} deposit was confirmed but transferring it to your vault failed.`,
-    `🛠 Our team is investigating — your funds are safe.`,
-    ``,
-    `🔗 <a href="${explorerTxUrl(args.depositSignature)}">View deposit transaction</a>`,
-  ].join("\n");
-}

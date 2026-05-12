@@ -48,6 +48,18 @@ export async function getJlUsdcBalance(owner: PublicKey): Promise<bigint> {
   }
 }
 
+/** USDC balance in the owner's ATA, in raw units (6 decimals). 0 if the ATA does not exist. */
+export async function getUsdcBalance(owner: PublicKey): Promise<bigint> {
+  const tokenProgram = await getTokenProgramForMint(USDC_MINT);
+  const ata = await getAssociatedTokenAddress(USDC_MINT, owner, false, tokenProgram);
+  try {
+    const acc = await getAccount(connection, ata, "confirmed", tokenProgram);
+    return acc.amount;
+  } catch {
+    return 0n;
+  }
+}
+
 /**
  * Deposit USDC from the keeper wallet into Jupiter Lend.
  * Returns jlUSDC shares minted to the keeper (exchange-rate appreciating).
