@@ -1,71 +1,245 @@
-import { getDueConfigIds, getSavingsConfig, markExecuted } from "./db.js";
-import { depositJupiterLend } from "./jupiter-lend.js";
+import {
+  getAllTelegramIds,
+  getDepositRecipient,
+  getUserSettings,
+  getUserWallet,
+  isDue,
+  logSavingsTransaction,
+  nextDueAt,
+  setLastRunAt,
+  usdToRawUsdc,
+} from "./db.js";
+import { depositJupiterLend, transferJlUsdc } from "./jupiter-lend.js";
 import { log } from "./logger.js";
+import { PublicKey } from "@solana/web3.js";
+import { buildPartialMessage, buildSuccessMessage, sendTelegramMessage } from "./telegram.js";
 
 type RunResult = {
-  id: string;
-  userWallet: string;
-  status: "success" | "skipped" | "failed";
-  signature?: string;
+  telegramId: string;
+  recipient?: string;
+  signerWallet?: string;
+  status: "success" | "skipped" | "failed" | "partial";
+  reason?: string;
+  depositSignature?: string;
+  transferSignature?: string;
+  jlUsdcSent?: string;
   error?: string;
 };
 
 /**
- * Fetch all due savings configs and execute their yield deposits.
- * Each config runs independently — a failure on one does not stop the others.
- *
- * Returns a summary of every config that was processed.
+ * Fetch every user with a savings config, run any that are due.
+ * Failures are isolated — one user's error does not stop the others.
  */
 export async function runDueDeposits(): Promise<RunResult[]> {
-  const now = Date.now();
-  const dueIds = await getDueConfigIds(now);
+  const ids = await getAllTelegramIds();
 
-  if (dueIds.length === 0) {
-    log.info("No savings configs due for execution");
+  if (ids.length === 0) {
+    log.info("No user settings found in Redis");
     return [];
   }
 
-  log.info({ count: dueIds.length }, "Found due savings configs");
+  log.info({ users: ids.length }, "Scanning users for due deposits");
 
   const results: RunResult[] = [];
 
-  for (const id of dueIds) {
-    const cfg = await getSavingsConfig(id);
+  for (const telegramId of ids) {
+    const wallet = await getUserWallet(telegramId);
+    const settings = await getUserSettings(telegramId);
 
-    if (!cfg) {
-      log.warn({ id }, "Config ID in schedule but not found in DB — skipping");
-      results.push({ id, userWallet: "unknown", status: "skipped" });
+    if (!wallet) {
+      log.info({ telegramId }, "Skipping user — no wallet record");
+      results.push({ telegramId, status: "skipped", reason: "no-wallet" });
       continue;
     }
 
-    if (!cfg.active) {
-      log.info({ id, userWallet: cfg.userWallet }, "Config is inactive — skipping");
-      results.push({ id, userWallet: cfg.userWallet, status: "skipped" });
+    if (!settings) {
+      log.info(
+        { telegramId, signerWallet: wallet.walletAddress },
+        "Skipping user — savings not configured yet (no settings:telegram:<id>)",
+      );
+      results.push({ telegramId, status: "skipped", reason: "no-settings" });
       continue;
     }
 
+    if (!settings.fundingConfiguredAt || !settings.fundingAmountUsd) {
+      log.info(
+        {
+          telegramId,
+          signerWallet: wallet.walletAddress,
+          fundingConfiguredAt: settings.fundingConfiguredAt,
+          fundingAmountUsd: settings.fundingAmountUsd,
+        },
+        "Skipping user — funding not configured",
+      );
+      results.push({ telegramId, status: "skipped", reason: "funding-not-configured" });
+      continue;
+    }
+
+    if (!isDue(settings)) {
+      const dueMs = nextDueAt(settings);
+      log.info(
+        {
+          telegramId,
+          signerWallet: wallet.walletAddress,
+          fundingFrequency: settings.fundingFrequency,
+          lastRunAt: settings.lastRunAt ?? null,
+          fundingConfiguredAt: settings.fundingConfiguredAt,
+          nextDueAt: dueMs ? new Date(dueMs).toISOString() : null,
+          inMs: dueMs ? dueMs - Date.now() : null,
+        },
+        "Skipping user — not due yet",
+      );
+      results.push({ telegramId, status: "skipped", reason: "not-due" });
+      continue;
+    }
+
+    const amountRaw = usdToRawUsdc(settings.fundingAmountUsd);
+    const recipientAddress = getDepositRecipient(wallet);
+
+    let recipient: PublicKey;
     try {
-      log.info(
-        { id, userWallet: cfg.userWallet, amountUsdc: cfg.amountUsdc, protocol: cfg.protocol },
-        "Executing scheduled deposit",
+      recipient = new PublicKey(recipientAddress);
+    } catch {
+      log.warn(
+        { telegramId, recipientAddress },
+        "Recipient address is not a valid Solana pubkey — skipping",
       );
+      results.push({ telegramId, status: "skipped", reason: "invalid-recipient-address" });
+      continue;
+    }
 
-      const result = await depositJupiterLend(BigInt(cfg.amountUsdc));
+    log.info(
+      {
+        telegramId,
+        recipient: recipientAddress,
+        recipientType: wallet.vaultAddress ? "squads-vault" : "signer-wallet",
+        signerWallet: wallet.walletAddress,
+        amountUsd: settings.fundingAmountUsd,
+        amountRaw: amountRaw.toString(),
+        frequency: settings.fundingFrequency,
+        strategy: settings.savingsStrategy,
+      },
+      "Executing scheduled deposit",
+    );
 
-      await markExecuted(id, now);
-
-      log.info(
-        { id, userWallet: cfg.userWallet, signature: result.signature },
-        "Scheduled deposit succeeded",
-      );
-
-      results.push({ id, userWallet: cfg.userWallet, status: "success", signature: result.signature });
+    // 1. Deposit USDC → keeper receives jlUSDC.
+    // Phase 1 uses the keeper's own USDC; delegate-based pull from the user's
+    // ATA (settings.delegationTxSignature) is on the roadmap.
+    let deposit;
+    try {
+      deposit = await depositJupiterLend(amountRaw);
     } catch (err: any) {
+      const errMsg = err?.message || err?.name || String(err);
       log.error(
-        { id, userWallet: cfg.userWallet, err: err.message },
-        "Scheduled deposit failed — config nextRunAt not advanced",
+        { telegramId, recipient: recipientAddress, err: errMsg, stack: err?.stack },
+        "Deposit failed — lastRunAt not advanced",
       );
-      results.push({ id, userWallet: cfg.userWallet, status: "failed", error: err.message });
+      results.push({
+        telegramId,
+        recipient: recipientAddress,
+        signerWallet: wallet.walletAddress,
+        status: "failed",
+        error: errMsg,
+      });
+      continue;
+    }
+
+    // 2. Forward the freshly minted jlUSDC to the user's wallet.
+    // If this fails after the deposit succeeded, advance lastRunAt anyway so
+    // we don't double-deposit; the jlUSDC sits in the keeper for manual recovery.
+    try {
+      const transferSignature = await transferJlUsdc(recipient, deposit.jlUsdcReceived);
+      const now = new Date();
+      await setLastRunAt(telegramId, now);
+      await logSavingsTransaction(telegramId, {
+        depositSignature: deposit.signature,
+        transferSignature,
+        timestamp: now.toISOString(),
+        recipientAddress,
+        signerWallet: wallet.walletAddress,
+        amountUsd: settings.fundingAmountUsd,
+        amountUsdcRaw: amountRaw.toString(),
+        jlUsdcReceived: deposit.jlUsdcReceived.toString(),
+        platform: "jupiter",
+        status: "success",
+      });
+
+      log.info(
+        {
+          telegramId,
+          recipient: recipientAddress,
+          depositSignature: deposit.signature,
+          transferSignature,
+          jlUsdcSent: deposit.jlUsdcReceived.toString(),
+        },
+        "Scheduled deposit + transfer succeeded",
+      );
+
+      await sendTelegramMessage(
+        telegramId,
+        buildSuccessMessage({
+          amountUsd: settings.fundingAmountUsd,
+          jlUsdcReceived: deposit.jlUsdcReceived.toString(),
+          recipientAddress,
+          transferSignature,
+        }),
+      );
+
+      results.push({
+        telegramId,
+        recipient: recipientAddress,
+        signerWallet: wallet.walletAddress,
+        status: "success",
+        depositSignature: deposit.signature,
+        transferSignature,
+        jlUsdcSent: deposit.jlUsdcReceived.toString(),
+      });
+    } catch (err: any) {
+      const errMsg = err?.message || err?.name || String(err);
+      const now = new Date();
+      await setLastRunAt(telegramId, now);
+      await logSavingsTransaction(telegramId, {
+        depositSignature: deposit.signature,
+        timestamp: now.toISOString(),
+        recipientAddress,
+        signerWallet: wallet.walletAddress,
+        amountUsd: settings.fundingAmountUsd,
+        amountUsdcRaw: amountRaw.toString(),
+        jlUsdcReceived: deposit.jlUsdcReceived.toString(),
+        platform: "jupiter",
+        status: "partial",
+        error: errMsg,
+      });
+
+      log.error(
+        {
+          telegramId,
+          recipient: recipientAddress,
+          depositSignature: deposit.signature,
+          jlUsdcHeldByKeeper: deposit.jlUsdcReceived.toString(),
+          err: errMsg,
+          stack: err?.stack,
+        },
+        "DEPOSIT OK BUT TRANSFER FAILED — jlUSDC is in the keeper wallet; manual transfer required",
+      );
+
+      await sendTelegramMessage(
+        telegramId,
+        buildPartialMessage({
+          amountUsd: settings.fundingAmountUsd,
+          depositSignature: deposit.signature,
+        }),
+      );
+
+      results.push({
+        telegramId,
+        recipient: recipientAddress,
+        signerWallet: wallet.walletAddress,
+        status: "partial",
+        depositSignature: deposit.signature,
+        jlUsdcSent: deposit.jlUsdcReceived.toString(),
+        error: errMsg,
+      });
     }
   }
 

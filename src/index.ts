@@ -10,10 +10,14 @@ async function tick(): Promise<void> {
     if (results.length === 0) return;
 
     const succeeded = results.filter((r) => r.status === "success").length;
+    const partial = results.filter((r) => r.status === "partial").length;
     const failed = results.filter((r) => r.status === "failed").length;
     const skipped = results.filter((r) => r.status === "skipped").length;
 
-    log.info({ total: results.length, succeeded, failed, skipped }, "Scheduler tick complete");
+    log.info(
+      { total: results.length, succeeded, partial, failed, skipped },
+      "Scheduler tick complete",
+    );
   } catch (err: any) {
     log.error({ err: err.message }, "Scheduler tick threw unexpectedly");
   }

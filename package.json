@@ -16,6 +16,7 @@
     "squads:create": "tsx src/cli/squads-create.ts",
     "run:schedules": "tsx src/cli/run-schedules.ts",
     "balance": "tsx src/cli/balance.ts",
+    "cluster": "tsx src/cli/cluster.ts",
     "wallet:show": "tsx src/cli/wallet.ts",
     "wallet:airdrop": "tsx src/cli/airdrop.ts",
     "lint": "tsc --noEmit",

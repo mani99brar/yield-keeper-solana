@@ -85,15 +85,36 @@ Then edit `.env`. The table below explains every variable:
 
 #### Solana cluster
 
-| Variable | Value |
-|----------|-------|
-| `CLUSTER` | `devnet` or `mainnet-beta` |
-| `RPC_URL` | Public or private RPC endpoint |
+Flip clusters with a **single variable** — `RPC_URL` is derived automatically from `CLUSTER` unless you set it explicitly.
 
-| Cluster | `CLUSTER` | `RPC_URL` |
-|---------|-----------|-----------|
-| Mainnet | `mainnet-beta` | `https://api.mainnet-beta.solana.com` |
-| Devnet  | `devnet` | `https://api.devnet.solana.com` |
+```
+CLUSTER=devnet           # or mainnet-beta
+# RPC_URL=               # optional override (Helius, Triton, etc.)
+```
+
+| `CLUSTER` value | Default RPC | Explorer URLs auto-append |
+|-----------------|-------------|--------------------------|
+| `devnet`        | `https://api.devnet.solana.com` | `?cluster=devnet` |
+| `mainnet-beta`  | `https://api.mainnet-beta.solana.com` | (no suffix needed) |
+
+Confirm what's loaded:
+
+```bash
+yarn cluster
+```
+
+Output:
+
+```
+Cluster : mainnet-beta
+RPC URL : https://api.mainnet-beta.solana.com
+Keeper  : /…/keeper-keypair.json
+Redis   : redis://default:<redacted>@…
+```
+
+Some operations are cluster-guarded automatically:
+- `yarn wallet:airdrop` — refuses to run on `mainnet-beta`
+- Logged explorer URLs include the right cluster suffix on devnet
 
 #### Keeper wallet
 
@@ -231,36 +252,117 @@ Exits with code `0` if all succeeded, `1` if any deposit failed.
 
 ## Savings configs (Redis schema)
 
-Each user's schedule is stored as a hash at key `savings:config:<id>` with the following shape:
+Users are keyed by Telegram ID. Each user has up to five keys:
+
+| Key | Type | Purpose |
+|-----|------|---------|
+| `settings:telegram:<id>` | string (JSON) | Active savings + funding config |
+| `settings:pending:telegram:<id>` | string (JSON) | Draft settings before user confirms |
+| `wallet:telegram:<id>` | string (JSON) | User's Privy wallet address + ID |
+| `airdrop_sent:telegram:<id>` | string | Marker that a one-time airdrop has been sent |
+| `savings:tx:telegram:<id>` | list (JSON items) | Per-user transaction history, newest first |
+
+### `settings:telegram:<id>`
 
 ```json
 {
-  "id": "user-abc",
-  "userWallet": "<solana-pubkey>",
-  "amountUsdc": "1000000",
-  "protocol": "jupiter",
-  "intervalSeconds": 604800,
-  "nextRunAt": 1715000000000,
-  "active": true,
-  "createdAt": 1714000000000
+  "savingsFrequency": "weekly",
+  "savingsAmountUsd": 250,
+  "savingsStrategy": "reflect",
+  "delegationTxSignature": "gmA8...",
+  "delegationSetAt": "2026-05-10T16:47:41.278Z",
+  "fundingFrequency": "weekly",
+  "fundingAmountUsd": 250,
+  "fundingConfiguredAt": "2026-05-10T16:47:42.559Z",
+  "lastRunAt": "2026-05-17T16:47:42.559Z"
 }
 ```
 
 | Field | Description |
 |-------|-------------|
-| `amountUsdc` | Raw USDC units (6 decimals). `1000000` = 1 USDC |
-| `intervalSeconds` | `86400` = daily, `604800` = weekly |
-| `nextRunAt` | Unix timestamp (ms) of the next execution |
-| `active` | Set to `false` to pause without deleting |
+| `savingsAmountUsd` / `fundingAmountUsd` | USD value (assumed pegged to USDC 1:1) |
+| `savingsFrequency` / `fundingFrequency` | `"daily"` \| `"weekly"` \| `"monthly"` |
+| `savingsStrategy` | `"jupiter"` (active) or `"reflect"` (integrated, not active) |
+| `delegationTxSignature` | SPL Approve tx granting the keeper delegate rights on the user's USDC ATA |
+| `fundingConfiguredAt` | ISO timestamp — start point for scheduling if `lastRunAt` is absent |
+| `lastRunAt` | ISO timestamp written by the keeper after each successful deposit |
 
-A Redis sorted set at `savings:schedule` indexes config IDs by `nextRunAt`, making range queries efficient.
+### `wallet:telegram:<id>`
 
-To seed a test config from a Redis CLI or Upstash console:
-
-```redis
-SET savings:config:test1 '{"id":"test1","userWallet":"<pubkey>","amountUsdc":"100000","protocol":"jupiter","intervalSeconds":60,"nextRunAt":0,"active":true,"createdAt":0}'
-ZADD savings:schedule 0 test1
+```json
+{
+  "walletType": "privy",
+  "walletId": "mers606a9hnqfvjrs09p1f5v",
+  "walletAddress": "5LXoEAWsVbq7TznzvjYaNVSTpsWj9QtDau4ntViX8fh5",
+  "vaultAddress": "4ae7uhubGdLrBC6vyXq81SJ536Qeuj9ZSkFyestdBQir",
+  "privyUserId": "did:privy:cmoi57ii300nm0cle19fa39zz"
+}
 ```
+
+| Field | Description |
+|-------|-------------|
+| `walletAddress` | The Privy-managed **signer** wallet — the user's transaction-signing identity |
+| `vaultAddress` | The **Squads multisig vault** — destination for yield tokens. Optional. |
+
+**Deposit recipient resolution:** the keeper transfers yield tokens to `vaultAddress` if set; otherwise it falls back to `walletAddress`. This is so a user who hasn't yet provisioned a Squads vault still receives their jlUSDC.
+
+### `savings:tx:telegram:<id>` — transaction history
+
+Redis **list** (LPUSH newest-first). Each entry is a JSON-encoded record:
+
+```json
+{
+  "depositSignature": "3JDfHF...",
+  "transferSignature": "5Mb91x...",
+  "timestamp": "2026-05-17T16:47:42.559Z",
+  "recipientAddress": "4ae7uhubGdLrBC6vyXq81SJ536Qeuj9ZSkFyestdBQir",
+  "signerWallet": "5LXoEAWsVbq7TznzvjYaNVSTpsWj9QtDau4ntViX8fh5",
+  "amountUsd": 250,
+  "amountUsdcRaw": "250000000",
+  "jlUsdcReceived": "239881234",
+  "platform": "jupiter",
+  "status": "success"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `depositSignature` | Tx hash for USDC → Jupiter Lend |
+| `transferSignature` | Tx hash for jlUSDC → recipient. Omitted on `partial` status |
+| `timestamp` | ISO time the keeper recorded the entry |
+| `recipientAddress` | Where the yield tokens went — Squads vault if set, else Privy signer |
+| `signerWallet` | Privy signer wallet for the user (cross-reference with `wallet:telegram:<id>`) |
+| `amountUsdcRaw` | Raw USDC units deposited (6 decimals) |
+| `jlUsdcReceived` | Raw jlUSDC shares minted on this deposit |
+| `status` | `"success"` (full flow) or `"partial"` (deposit ok, transfer failed) |
+| `error` | Only present on `"partial"` — the transfer-leg error message |
+
+Query the latest history with `LRANGE savings:tx:telegram:<id> 0 49` for the most recent 50, or `0 -1` for the entire log.
+
+### How the scheduler picks users
+
+On each tick the keeper:
+
+1. Calls `KEYS wallet:telegram:*` to enumerate every user in the system.
+2. Skips users without a committed `settings:telegram:<id>` document.
+3. Skips users missing `fundingConfiguredAt` or `fundingAmountUsd`.
+4. Computes `nextDueAt`:
+   - **First run** (no `lastRunAt`): due immediately at `fundingConfiguredAt` — the very next tick after the user configures their savings will execute a deposit.
+   - **Subsequent runs**: due `fundingFrequency` after the previous `lastRunAt`.
+5. If `now ≥ nextDueAt`, **deposits USDC** into Jupiter Lend from the keeper wallet (receives jlUSDC).
+6. **Transfers** the freshly minted jlUSDC to the recipient (Squads vault if set, else Privy signer; PDAs are supported via `allowOwnerOffCurve=true`).
+7. Writes `lastRunAt = now` back into `settings:telegram:<id>`.
+
+The `delegationTxSignature` is read but not yet acted on — Phase 1 funds the deposit from the keeper's USDC. Phase 2 will use the SPL delegate to pull from each user's ATA.
+
+#### Result statuses
+
+| Status | Meaning |
+|--------|---------|
+| `success` | Deposit + transfer both confirmed |
+| `partial` | Deposit confirmed, transfer failed — jlUSDC sits in keeper wallet, manual recovery needed. `lastRunAt` is still advanced so the next tick does not double-deposit. |
+| `failed` | Deposit itself failed; `lastRunAt` NOT advanced — will retry on next tick |
+| `skipped` | Not due, no funding configured, no wallet, or invalid wallet address |
 
 ---
 

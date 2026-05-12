@@ -3,6 +3,7 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import { connection } from "./connection.js";
 import { loadWallet } from "./wallet.js";
 import { log } from "./logger.js";
+import { explorerTxUrl } from "./config.js";
 
 export type CreateWalletResult = {
   /** The Squads multisig account address — reference this for all future multisig operations */
@@ -76,7 +77,7 @@ export async function createSquadsWallet(
       signature,
       multisigPda: multisigPda.toBase58(),
       vaultPda: vaultPda.toBase58(),
-      explorer: `https://explorer.solana.com/tx/${signature}`,
+      explorer: explorerTxUrl(signature),
       squadsUrl: `https://app.squads.so/squads/${multisigPda.toBase58()}/treasury/${vaultPda.toBase58()}`,
     },
     "Squads multisig created",

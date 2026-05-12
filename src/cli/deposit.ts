@@ -1,5 +1,6 @@
 import { depositUsdcPlus } from "../reflect";
 import { log } from "../logger.js";
+import { explorerTxUrl } from "../config.js";
 
 async function main() {
   // Parse CLI args:  yarn deposit <amountUsdc> [slippageBps]
@@ -26,7 +27,7 @@ async function main() {
   log.info(
     {
       signature: result.signature,
-      explorer: `https://explorer.solana.com/tx/${result.signature}?cluster=mainnet-beta`,
+      explorer: explorerTxUrl(result.signature),
     },
     "Deposit complete",
   );

@@ -3,7 +3,12 @@
     "allow": [
       "Bash(yarn add *)",
       "WebFetch(domain:app.squads.so)",
-      "Bash(yarn install *)"
+      "Bash(yarn install *)",
+      "Bash(yarn tsx *)",
+      "Bash(yarn run:schedules)",
+      "Bash(yarn cluster *)",
+      "Bash(curl -s 'https://api.mainnet-beta.solana.com' -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getTransaction\",\"params\":[\"2RNBtQogbAPiC5FFeFKPrJKBuWvQMnWGF8z4X5G9A4TBjv9DkwhAVFYWYRiVsMxZN7iMcB4AuX8bwcPscokpn1r\",{\"maxSupportedTransactionVersion\":0,\"encoding\":\"jsonParsed\"}]}')",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); r=d.get\\('result'\\); print\\('On mainnet:', 'YES' if r else 'NO', '- slot', r.get\\('slot'\\) if r else 'n/a', '- blockTime', r.get\\('blockTime'\\) if r else 'n/a'\\)\")"
     ]
   }
 }

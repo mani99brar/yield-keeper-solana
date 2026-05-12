@@ -7,12 +7,16 @@ async function main() {
   const results = await runDueDeposits();
 
   const succeeded = results.filter((r) => r.status === "success").length;
+  const partial = results.filter((r) => r.status === "partial").length;
   const failed = results.filter((r) => r.status === "failed").length;
   const skipped = results.filter((r) => r.status === "skipped").length;
 
-  log.info({ total: results.length, succeeded, failed, skipped }, "Scheduled run complete");
+  log.info(
+    { total: results.length, succeeded, partial, failed, skipped },
+    "Scheduled run complete",
+  );
 
-  if (failed > 0) {
+  if (failed > 0 || partial > 0) {
     process.exit(1);
   }
 }

@@ -1,5 +1,6 @@
 import { depositJupiterLend } from "../jupiter-lend.js";
 import { log } from "../logger.js";
+import { explorerTxUrl } from "../config.js";
 
 async function main() {
   const [amountStr] = process.argv.slice(2);
@@ -23,7 +24,7 @@ async function main() {
     {
       signature: result.signature,
       usdcDeposited: result.usdcDeposited.toString(),
-      explorer: `https://explorer.solana.com/tx/${result.signature}`,
+      explorer: explorerTxUrl(result.signature),
     },
     "Jupiter Lend deposit complete",
   );
