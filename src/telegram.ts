@@ -48,13 +48,13 @@ export function buildSuccessMessage(args: {
   transferSignature: string;
 }): string {
   return [
-    `<b>Savings deposit complete</b>`,
+    `✅ <b>Savings deposit complete</b>`,
     ``,
-    `Amount: ${fmtUsd(args.amountUsd)}`,
-    `Received: ${fmtJlUsdc(args.jlUsdcReceived)} jlUSDC`,
-    `Vault: <code>${short(args.recipientAddress)}</code>`,
+    `💵 Amount: ${fmtUsd(args.amountUsd)}`,
+    `🌱 Received: ${fmtJlUsdc(args.jlUsdcReceived)} jlUSDC`,
+    `🔐 Vault: <code>${short(args.recipientAddress)}</code>`,
     ``,
-    `<a href="${explorerTxUrl(args.transferSignature)}">View transaction</a>`,
+    `🔗 <a href="${explorerTxUrl(args.transferSignature)}">View transaction</a>`,
   ].join("\n");
 }
 
@@ -63,11 +63,11 @@ export function buildPartialMessage(args: {
   depositSignature: string;
 }): string {
   return [
-    `<b>Savings deposit partially complete</b>`,
+    `⚠️ <b>Savings deposit partially complete</b>`,
     ``,
     `Your ${fmtUsd(args.amountUsd)} deposit was confirmed but transferring it to your vault failed.`,
-    `Our team is investigating — your funds are safe.`,
+    `🛠 Our team is investigating — your funds are safe.`,
     ``,
-    `<a href="${explorerTxUrl(args.depositSignature)}">View deposit transaction</a>`,
+    `🔗 <a href="${explorerTxUrl(args.depositSignature)}">View deposit transaction</a>`,
   ].join("\n");
 }
